@@ -1,0 +1,9 @@
+FROM qwen2.5-coder:7b
+
+# Context window 16k tokens par unlock
+PARAMETER num_ctx 16384
+
+# Deterministic coding precision
+PARAMETER temperature 0.1
+PARAMETER top_p 0.9
+PARAMETER repeat_penalty 1.05

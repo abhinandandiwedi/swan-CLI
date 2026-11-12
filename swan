@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+import sys
+import os
+from pathlib import Path
+
+# Add swan-llm to path
+SWAN_DIR = Path(__file__).parent.resolve()
+sys.path.append(str(SWAN_DIR))
+
+from swan_core_agent import SwanCoreAgent
+from build_repo_map import generate_map
+
+def print_banner():
+    banner = """
+\033[1;36m      ███████╗██╗    ██╗ █████╗ ███╗   ██╗
+      ██╔════╝██║    ██║██╔══██╗████╗  ██║
+      ███████╗██║ █╗ ██║███████║██╔██╗ ██║
+      ╚════██║██║███╗██║██╔══██║██║╚██╗██║
+      ███████║╚███╔███╔╝██║  ██║██║ ╚████║
+      ╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═══╝\033[0m
+\033[1;33m    [ SWAN-ENGINE // Local Autonomous C2 & AI Core ]\033[0m
+\033[0;32m    [ Target Workspace: ~/-TIDDA-Core ]\033[0m
+    --------------------------------------------------
+"""
+    print(banner)
+
+def main():
+    print_banner()
+    if len(sys.argv) < 2:
+        print("\033[1;37mUsage:\033[0m")
+        print("  \033[1;32mswan task '<objective>'\033[0m   - Run an autonomous coding task")
+        print("  \033[1;32mswan map\033[0m                  - Re-generate TIDDA-Core AST Repo Map")
+        print("  \033[1;32mswan interactive\033[0m          - Start interactive agent shell")
+        print("")
+        return
+
+    command = sys.argv[1].lower()
+
+    if command == "map":
+        print("🗺 Re-generating TIDDA-Core AST Repository Map...")
+        generate_map()
+    elif command == "task":
+        if len(sys.argv) < 3:
+            print("❌ Please provide a task objective. Example: swan task 'Fix server websocket handler'")
+            return
+        objective = " ".join(sys.argv[2:])
+        agent = SwanCoreAgent()
+        agent.execute_task(objective)
+    elif command == "interactive":
+        agent = SwanCoreAgent()
+        print("⚡ Entering Interactive Shell (Type 'exit' to quit)")
+        try:
+            while True:
+                cmd = input("\n\033[1;35mSWAN-CMD >> \033[0m").strip()
+                if not cmd:
+                    continue
+                if cmd.lower() in ["exit", "quit"]:
+                    break
+                agent.execute_task(cmd)
+        except KeyboardInterrupt:
+            print("\nExiting SWAN-ENGINE.")
+    else:
+        print(f"❌ Unknown command: {command}. Type 'swan' for help.")
+
+if __name__ == "__main__":
+    main()
