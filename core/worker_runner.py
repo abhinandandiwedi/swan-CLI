@@ -249,24 +249,40 @@ class WorkerRunner:
         workspace_path: Path,
         orchestrator: Optional[TaskOrchestrator] = None,
         worker_id: Optional[str] = None,
+        use_worktree: bool = False,
     ) -> WorkerResult:
         """Execute a single bounded task.
 
         Pipeline:
-        1. Acquire write-scope locks (via orchestrator).
-        2. Query Model Router for role/preferred model.
-        3. Query Resource Monitor for inference admission.
-        4. Build bounded context with Context Manager.
-        5. Invoke Ollama model.
-        6. Validate model response JSON schema.
-        7. Enforce read/write scope containment on all file writes.
-        8. Execute allowed test/build commands via Secure Execution Engine.
-        9. Persist results and release locks safely.
+        1. Optionally provision an isolated Git worktree if use_worktree=True.
+        2. Acquire write-scope locks (via orchestrator).
+        3. Query Model Router for role/preferred model.
+        4. Query Resource Monitor for inference admission.
+        5. Build bounded context with Context Manager.
+        6. Invoke Ollama model.
+        7. Validate model response JSON schema.
+        8. Enforce read/write scope containment on all file writes.
+        9. Execute allowed test/build commands via Secure Execution Engine.
+        10. Persist results and release locks safely.
         """
         start_time = time.time()
         effective_worker_id = worker_id or f"worker-{task.role}-{task.task_id}"
         workspace_path = Path(workspace_path).resolve()
         base_commit = self._resolve_base_commit(workspace_path, task)
+
+        effective_workspace = workspace_path
+        assigned_worktree_id = base_commit
+
+        if use_worktree:
+            from core.validator import WorktreeManager
+            wt_mgr = WorktreeManager(workspace=workspace_path)
+            if wt_mgr.is_git_repo(workspace_path):
+                wt_dir = workspace_path / ".swan" / "worktrees" / task.task_id
+                branch_name = f"swan/{task.batch_id}/{task.task_id}"
+                ok, res_path = wt_mgr.create_worktree(wt_dir, branch_name=branch_name, base_commit=task.base_commit)
+                if ok:
+                    effective_workspace = wt_dir
+                    assigned_worktree_id = str(wt_dir)
 
         # 1. Acquire write locks if orchestrator is provided
         if orchestrator is not None:
@@ -282,7 +298,7 @@ class WorkerRunner:
                     summary="Lock acquisition failed due to write-scope conflict",
                     error="Lock conflict: Another task holds an overlapping write-scope lock",
                     duration_ms=duration_ms,
-                    worktree_id=base_commit,
+                    worktree_id=assigned_worktree_id,
                 )
 
         # 2. Select Model
@@ -374,7 +390,7 @@ class WorkerRunner:
             engine = self.execution_engine
             if engine is None:
                 engine = ExecutionEngine(
-                    workspace=workspace_path,
+                    workspace=effective_workspace,
                     approval_mode="prompt",
                     timeout=task.timeout,
                 )
@@ -404,7 +420,7 @@ class WorkerRunner:
 
             # Read files in read_scope and add as observations
             for read_path in task.read_scope:
-                file_full = workspace_path / read_path
+                file_full = effective_workspace / read_path
                 if file_full.is_file():
                     read_ok, read_val = engine.read_file(read_path)
                     if read_ok:
@@ -442,7 +458,7 @@ class WorkerRunner:
                     summary="Ollama inference request failed",
                     error=f"Ollama failure: {e}",
                     duration_ms=duration_ms,
-                    worktree_id=base_commit,
+                    worktree_id=assigned_worktree_id,
                 )
 
             # 7. Parse Model Response
@@ -514,7 +530,7 @@ class WorkerRunner:
                         error=f"Scope violation: File '{file_rel}' is not in authorized write_scope: {task.write_scope}",
                         usage=usage,
                         duration_ms=duration_ms,
-                        worktree_id=base_commit,
+                        worktree_id=assigned_worktree_id,
                     )
 
                 # Write through ExecutionEngine
@@ -533,7 +549,7 @@ class WorkerRunner:
                         error=f"File write failed: {write_val}",
                         usage=usage,
                         duration_ms=duration_ms,
-                        worktree_id=base_commit,
+                        worktree_id=assigned_worktree_id,
                     )
                 changed_files.append(file_rel)
 
@@ -592,7 +608,7 @@ class WorkerRunner:
                             error=f"Forbidden command requested: '{cmd}' ({permission})",
                             usage=usage,
                             duration_ms=duration_ms,
-                            worktree_id=base_commit,
+                            worktree_id=assigned_worktree_id,
                         )
 
             # 10. Worker Success
@@ -612,7 +628,7 @@ class WorkerRunner:
                 error=None,
                 usage=usage,
                 duration_ms=duration_ms,
-                worktree_id=base_commit,
+                worktree_id=assigned_worktree_id,
             )
 
         finally:
@@ -626,6 +642,7 @@ class WorkerRunner:
         batch_id: str,
         orchestrator: TaskOrchestrator,
         workspace_path: Path,
+        use_worktrees: bool = False,
     ) -> Dict[str, WorkerResult]:
         """Execute a batch of tasks sequentially respecting DAG dependencies and locks.
 
@@ -666,6 +683,7 @@ class WorkerRunner:
                 task=current_task,
                 workspace_path=workspace_path,
                 orchestrator=orchestrator,
+                use_worktree=use_worktrees,
             )
             results[current_task.task_id] = result
             orchestrator.record_worker_result(result)

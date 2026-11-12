@@ -25,12 +25,24 @@ def print_banner():
     print(banner)
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ("json", "--json"):
+        from core.json_cli import main as json_main
+        sys.exit(json_main(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "mcp":
+        from core.mcp_server import MCPServer
+        from core.task_orchestrator import TaskOrchestrator
+        srv = MCPServer(TaskOrchestrator())
+        srv.run_stdio()
+        return
+
     print_banner()
     if len(sys.argv) < 2:
         print("\033[1;37mUsage:\033[0m")
         print("  \033[1;32mswan task '<objective>'\033[0m   - Run an autonomous coding task")
         print("  \033[1;32mswan map\033[0m                  - Re-generate TIDDA-Core AST Repo Map")
         print("  \033[1;32mswan interactive\033[0m          - Start interactive agent shell")
+        print("  \033[1;32mswan json <command>\033[0m       - Headless structured JSON CLI")
+        print("  \033[1;32mswan mcp\033[0m                  - Model Context Protocol (MCP) stdio server")
         print("")
         return
 
