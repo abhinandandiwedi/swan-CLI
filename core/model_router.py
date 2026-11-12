@@ -512,3 +512,4 @@ class ModelRouter:
             f"  Model '{model_name}' must be pulled manually by the user:\n"
             f"    ollama pull {model_name}"
         )
+
