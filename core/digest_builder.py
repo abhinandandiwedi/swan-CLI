@@ -298,3 +298,4 @@ class DigestBuilder:
             "validation_reports": [r["report"] for r in validation_reports],
             "events": events,
         }
+
