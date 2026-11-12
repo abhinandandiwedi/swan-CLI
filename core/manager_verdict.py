@@ -293,3 +293,4 @@ class ManagerVerdictService:
 
         updated_task = orchestrator.get_task(verdict.task_id)
         return updated_task
+
