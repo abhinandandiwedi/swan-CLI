@@ -144,6 +144,8 @@ VALID_TRANSITIONS: Dict[TaskState, Set[TaskState]] = {
         TaskState.CANCELLED,
     },
     TaskState.VALIDATION_PENDING: {
+        TaskState.RETRY_PENDING,
+        TaskState.BLOCKED,
         TaskState.CANCELLED,
     },
     TaskState.BLOCKED: {
@@ -527,9 +529,22 @@ class TaskOrchestrator:
                 );
             """)
 
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS validation_reports (
+                    report_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    batch_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    report_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
+                );
+            """)
+
             self.conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_batch_state ON tasks(batch_id, state);")
             self.conn.execute("CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id);")
             self.conn.execute("CREATE INDEX IF NOT EXISTS idx_worker_results_task ON worker_results(task_id);")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_validation_reports_task ON validation_reports(task_id);")
 
     def submit_batch(
         self,
@@ -924,6 +939,53 @@ class TaskOrchestrator:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (task_id, batch_id, worker_id, status, model, result_json, now))
             return cur.lastrowid
+
+    def record_validation_report(self, report: Any) -> int:
+        """Persist validation report to database."""
+        now = time.time()
+        if hasattr(report, "to_dict"):
+            data = report.to_dict()
+        elif isinstance(report, dict):
+            data = dict(report)
+        else:
+            raise TaskOrchestratorError("ValidationReport must be a dataclass or dict")
+
+        task_id = str(data.get("task_id", ""))
+        batch_id = str(data.get("batch_id", ""))
+        status = str(data.get("validation_status", data.get("status", "")))
+        report_json = json.dumps(data)
+
+        with self.conn:
+            cur = self.conn.execute("""
+                INSERT INTO validation_reports (task_id, batch_id, status, report_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (task_id, batch_id, status, report_json, now))
+            return cur.lastrowid
+
+    def get_validation_reports(self, task_id: str) -> List[Dict[str, Any]]:
+        """Fetch all validation reports recorded for a task."""
+        rows = self.conn.execute(
+            "SELECT * FROM validation_reports WHERE task_id = ? ORDER BY created_at ASC",
+            (task_id,),
+        ).fetchall()
+        reports = []
+        for row in rows:
+            rep_dict = dict(row)
+            rep_dict["report"] = json.loads(row["report_json"])
+            reports.append(rep_dict)
+        return reports
+
+    def get_latest_validation_report(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch the most recent validation report for a task."""
+        row = self.conn.execute(
+            "SELECT * FROM validation_reports WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        if not row:
+            return None
+        rep_dict = dict(row)
+        rep_dict["report"] = json.loads(row["report_json"])
+        return rep_dict
 
     def get_worker_results(self, task_id: str) -> List[Dict[str, Any]]:
         """Fetch all recorded results for a specific task."""
